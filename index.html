@@ -1,0 +1,1255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Folder Notes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #f4f6fa;
+    --ink: #1c2230;
+    --muted: #7b8597;
+    --blue: #4396fd;
+    --blue-soft: #eaf3ff;
+    --red: #e5484d;
+    --red-soft: #fdecec;
+    --paper: #ffffff;
+    --spring: cubic-bezier(.34, 1.4, .64, 1);
+    --smooth: cubic-bezier(.32, .72, 0, 1);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: radial-gradient(1200px 700px at 50% 40%, #fbfcfe 0%, var(--bg) 70%);
+    font-family: "Geist", system-ui, sans-serif;
+    color: var(--ink);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font: inherit; }
+
+  .stage {
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .stage.is-open { touch-action: none; cursor: grab; }
+  .stage.is-dragging { cursor: grabbing; }
+
+  /* ---------- Folder (split into rear + front so notes can sit between) ---------- */
+  .folder-rear, .folder-front {
+    position: absolute;
+    left: 0; top: 0;
+    width: 353.2px; height: 331.32px;
+    transform-origin: 50% 50%;
+    will-change: transform;
+  }
+  .folder-rear { z-index: 1; pointer-events: none; }
+  .folder-front { z-index: 3; pointer-events: none; }
+  .folder-rear svg, .folder-front svg {
+    position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible;
+  }
+
+  .paper {
+    transform-box: fill-box;
+    transform-origin: 50% 100%;
+    transition: transform 560ms var(--spring);
+  }
+  .p-white  { transition-delay: 0ms; }
+  .p-bg     { transition-delay: 30ms; }
+  .p-shadow { transition-delay: 60ms; }
+  .p-border { transition-delay: 90ms; }
+
+  /* hover: papers slide up, teasing the content without fully revealing it */
+  .stage.is-hover:not(.is-open) .p-white  { transform: translateY(-30px); }
+  .stage.is-hover:not(.is-open) .p-bg     { transform: translate(-2px, -22px) rotate(-1.5deg); }
+  .stage.is-hover:not(.is-open) .p-shadow { transform: translate(-4px, -17px) rotate(-3deg); }
+  .stage.is-hover:not(.is-open) .p-border { transform: translate(4px, -14px) rotate(2.5deg); }
+
+  .stage.is-open .p-white  { transform: translateY(18px); }
+  .stage.is-open .p-bg     { transform: translateY(8px); }
+  .stage.is-open.is-hover .p-white { transform: translateY(-10px); }
+  .stage.is-open.is-hover .p-bg    { transform: translateY(-4px) rotate(-1deg); }
+
+  .front-tilt {
+    position: absolute; inset: 0;
+    transform-origin: 50% 93%;
+    transition: transform 560ms var(--spring);
+  }
+  .stage.is-hover:not(.is-open) .front-tilt { transform: perspective(900px) rotateX(-12deg); }
+
+  .info {
+    position: absolute;
+    left: 36.38px; top: 200.16px;
+    width: 283.7px; height: 84.7px;
+    display: flex; flex-direction: column; justify-content: space-between;
+    pointer-events: none;
+  }
+  .info-title { margin: 0; font-weight: 700; font-size: 19.76px; color: #f1f0f0; line-height: 1.2; }
+  .info-notes { margin: 5.65px 0 0; font-weight: 500; font-size: 14.12px; color: #eae9e9; }
+  .info-size  { margin: 0; font-weight: 500; font-size: 11.29px; color: #eae9e9; }
+
+  .folder-hit {
+    position: absolute;
+    left: 15.63px; top: 0;
+    width: 321.94px; height: 309.44px;
+    border: 0; padding: 0; margin: 0;
+    background: transparent;
+    border-radius: 31px;
+    cursor: pointer;
+    pointer-events: auto;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .folder-hit:focus-visible { outline: 4px solid rgba(67, 150, 253, .45); outline-offset: 8px; }
+
+  /* ---------- Notes ---------- */
+  .notes { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+  .note {
+    position: absolute; left: 0; top: 0;
+    width: var(--card-w, 168px); height: var(--card-h, 210px);
+    padding: calc(14px * var(--k, 1));
+    border-radius: calc(16px * var(--k, 1));
+    background: var(--paper);
+    box-shadow: 0 1px 2px rgba(20, 40, 80, .06), 0 10px 28px rgba(30, 80, 160, .12);
+    display: flex; flex-direction: column;
+    font-size: calc(13px * var(--k, 1));
+    opacity: 0;
+    outline: none;
+    will-change: transform, opacity;
+    /* hover spread + lift: one calm ease-out, no overshoot */
+    transition: translate 380ms cubic-bezier(.22, 1, .36, 1), box-shadow 380ms cubic-bezier(.22, 1, .36, 1);
+  }
+  .note.is-out { pointer-events: auto; cursor: pointer; }
+  .stage.is-dragging .note.is-out { cursor: grabbing; }
+  .note.is-hot { box-shadow: 0 2px 4px rgba(20, 40, 80, .06), 0 18px 36px rgba(30, 80, 160, .18); }
+  .note:focus-visible { box-shadow: 0 0 0 3px rgba(67, 150, 253, .5), 0 10px 28px rgba(30, 80, 160, .12); }
+  .note-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: .85em; }
+  .tag {
+    font-size: .78em; font-weight: 600;
+    color: #2f7bea; background: var(--blue-soft);
+    padding: .25em .6em; border-radius: 999px;
+    white-space: nowrap;
+  }
+  .date { font-size: .78em; color: var(--muted); font-weight: 500; }
+  .note h3 {
+    margin: 0 0 .45em; font-size: 1.12em; line-height: 1.22; font-weight: 600; letter-spacing: -.01em;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .note h3.is-empty { color: #9aa3b2; }
+  .note p {
+    margin: 0; font-size: .9em; line-height: 1.45; color: #5d6676;
+    display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
+    overflow-wrap: anywhere;
+  }
+  .note-foot {
+    margin-top: auto;
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: .76em; color: var(--muted); font-weight: 500;
+  }
+  .note-trash {
+    width: calc(28px * var(--k, 1)); height: calc(28px * var(--k, 1));
+    margin: calc(-6px * var(--k, 1)) calc(-6px * var(--k, 1)) calc(-6px * var(--k, 1)) 0;
+    display: grid; place-items: center;
+    border: 0; border-radius: calc(9px * var(--k, 1));
+    background: transparent; color: #a3abb8;
+    cursor: pointer;
+    transition: background-color 160ms ease, color 160ms ease, scale 160ms ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .note-trash svg { width: calc(15px * var(--k, 1)); height: calc(15px * var(--k, 1)); }
+  .note-trash:hover { background: var(--red-soft); color: var(--red); }
+  .note-trash:active { scale: .9; }
+  .note-trash:focus-visible { outline: 2px solid rgba(229, 72, 77, .5); outline-offset: 1px; }
+  .skeleton { display: grid; gap: .55em; margin-top: .3em; }
+  .skeleton i { display: block; height: .55em; border-radius: 99px; background: #eef1f6; }
+  .skeleton i:nth-child(2) { width: 85%; }
+  .skeleton i:nth-child(3) { width: 60%; }
+
+  /* ---------- Add button ---------- */
+  .add {
+    position: absolute; left: 0; top: 0; z-index: 4;
+    width: 48px; height: 48px; margin: -24px 0 0 -24px;
+    border-radius: 50%; border: 0;
+    background: #fff; color: var(--blue);
+    display: grid; place-items: center;
+    box-shadow: 0 1px 2px rgba(20, 40, 80, .08), 0 8px 22px rgba(30, 80, 160, .16);
+    cursor: pointer;
+    opacity: 0;
+    scale: .4;
+    pointer-events: none;
+    transition: opacity 200ms ease, scale 460ms var(--spring), left 600ms var(--smooth), top 600ms var(--smooth);
+    -webkit-tap-highlight-color: transparent;
+  }
+  .stage.is-open .add { opacity: 1; scale: 1; pointer-events: auto; transition-delay: 320ms, 320ms, 0ms, 0ms; }
+  .stage.is-open .add:hover { scale: 1.07; transition-delay: 0ms; }
+  .stage.is-open .add:active { scale: .9; transition-duration: 120ms; transition-delay: 0ms; }
+  .add:focus-visible { outline: 3px solid rgba(67, 150, 253, .45); outline-offset: 4px; }
+  .add svg { width: 22px; height: 22px; }
+
+  /* ---------- Caption + reset ---------- */
+  .caption {
+    position: absolute; left: 16px; right: 16px; bottom: 28px; z-index: 5;
+    text-align: center; font-size: 13px; color: var(--muted); font-weight: 500;
+    pointer-events: none;
+  }
+  kbd {
+    font: inherit; font-size: 12px;
+    padding: 1px 6px; border-radius: 6px;
+    background: #fff; border: 1px solid #e3e7ee; color: #4a5365;
+  }
+  .caption .count { color: var(--ink); }
+  .reset {
+    position: absolute; top: 16px; right: 16px; z-index: 5;
+    font-size: 12px; font-weight: 500; color: var(--muted);
+    background: rgba(255, 255, 255, .7); border: 1px solid #e3e7ee; border-radius: 999px;
+    padding: 6px 12px; cursor: pointer;
+    transition: color 160ms ease, background-color 160ms ease;
+  }
+  .reset:hover { color: var(--ink); background: #fff; }
+
+  /* ---------- Shared modal bits ---------- */
+  .editor-root, .confirm-root { position: fixed; inset: 0; }
+  .editor-root { z-index: 20; }
+  .confirm-root { z-index: 30; display: grid; place-items: center; padding: 16px; }
+  .editor-root[hidden], .confirm-root[hidden] { display: none; }
+  .is-leaving { pointer-events: none; }
+  .backdrop {
+    position: absolute; inset: 0;
+    background: rgba(18, 28, 48, .34);
+  }
+  .confirm-root .backdrop { background: rgba(18, 28, 48, .22); }
+
+  .icon-btn {
+    width: 36px; height: 36px; flex: none;
+    display: grid; place-items: center;
+    border: 0; border-radius: 11px;
+    background: #f3f5f9; color: #4a5365;
+    cursor: pointer;
+    transition: background-color 160ms ease, color 160ms ease, scale 160ms ease;
+  }
+  .icon-btn svg { width: 17px; height: 17px; }
+  .icon-btn:hover { background: #e9edf3; color: var(--ink); }
+  .icon-btn.danger:hover { background: var(--red-soft); color: var(--red); }
+  .icon-btn:active { scale: .92; }
+  .icon-btn:focus-visible, .btn:focus-visible { outline: 3px solid rgba(67, 150, 253, .45); outline-offset: 2px; }
+
+  /* ---------- Editor ---------- */
+  .sheet {
+    position: fixed;
+    background: #fff;
+    border-radius: 22px;
+    overflow: hidden;
+    box-shadow: 0 2px 6px rgba(20, 40, 90, .08), 0 30px 80px rgba(20, 40, 90, .26);
+    transform-origin: 50% 50%;
+  }
+  .sheet .ghost-card {
+    left: 0; top: 0;
+    opacity: 1; background: transparent; box-shadow: none;
+    transform-origin: 0 0; pointer-events: none;
+    transition: none; translate: none;
+  }
+  .ed {
+    position: absolute; left: 0; top: 0;
+    will-change: transform, opacity;
+    display: flex; flex-direction: column;
+    padding: 22px 28px 18px;
+    transform-origin: 0 0;
+  }
+  .ed-head { display: flex; align-items: center; gap: 10px; margin-bottom: 22px; }
+  .ed-head .tag { font-size: 12px; padding: 4px 10px; }
+  .ed-status { font-size: 12px; color: var(--muted); font-weight: 500; display: inline-flex; align-items: center; gap: 6px; }
+  .ed-status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #3dbb7a; transition: background-color 200ms ease; }
+  .ed-status.is-saving::before { background: #f2b53c; }
+  .ed-actions { margin-left: auto; display: flex; gap: 8px; }
+  .ed-title {
+    border: 0; outline: 0; padding: 0; margin: 0 0 12px; width: 100%;
+    font: 600 28px/1.2 "Geist", system-ui, sans-serif; letter-spacing: -.02em; color: var(--ink);
+    background: transparent;
+  }
+  .ed-body {
+    flex: 1; min-height: 0;
+    border: 0; outline: 0; resize: none; padding: 0; margin: 0;
+    font: 400 16px/1.65 "Geist", system-ui, sans-serif; color: #3a4252;
+    background: transparent;
+  }
+  .ed-title::placeholder, .ed-body::placeholder { color: #b3bac6; }
+  .ed-foot {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    font-size: 12px; color: var(--muted); font-weight: 500;
+    padding-top: 14px; margin-top: 10px; border-top: 1px solid #eef1f6;
+  }
+  @media (max-width: 559px) {
+    .ed { padding: 16px 18px 14px; }
+    .ed-title { font-size: 23px; }
+    .ed-body { font-size: 15px; }
+    .ed-hint { display: none; }
+  }
+
+  /* ---------- Confirm ---------- */
+  .confirm {
+    position: relative;
+    width: min(380px, 100%);
+    background: #fff;
+    border-radius: 20px;
+    padding: 24px;
+    box-shadow: 0 24px 64px rgba(20, 40, 90, .24), 0 2px 6px rgba(20, 40, 90, .08);
+  }
+  .cf-icon {
+    width: 44px; height: 44px; border-radius: 50%;
+    display: grid; place-items: center;
+    background: var(--red-soft); color: var(--red);
+    margin-bottom: 16px;
+  }
+  .cf-icon svg { width: 20px; height: 20px; }
+  .confirm h2 { margin: 0 0 6px; font-size: 18px; font-weight: 600; letter-spacing: -.01em; }
+  .confirm p { margin: 0 0 22px; font-size: 14px; line-height: 1.5; color: #5d6676; overflow-wrap: anywhere; }
+  .cf-actions { display: flex; justify-content: flex-end; gap: 10px; }
+  .btn {
+    height: 40px; padding: 0 18px;
+    border: 0; border-radius: 12px;
+    font-size: 14px; font-weight: 600;
+    cursor: pointer;
+    transition: background-color 160ms ease, scale 140ms ease;
+  }
+  .btn:active { scale: .97; }
+  .btn-ghost { background: #f1f3f7; color: var(--ink); }
+  .btn-ghost:hover { background: #e7ebf1; }
+  .btn-danger { background: var(--red); color: #fff; }
+  .btn-danger:hover { background: #d63c41; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .paper, .front-tilt, .note { transition-duration: 1ms; }
+    .add { transition-duration: 150ms; }
+  }
+</style>
+</head>
+<body>
+<main class="stage" id="stage">
+
+  <!-- rear: back panel + papers -->
+  <div class="folder-rear" id="rear" aria-hidden="true">
+    <svg viewBox="0 0 176.6 165.66" fill="none">
+      <rect x="7.81414" width="160.971" height="154.72" rx="15.6283" fill="#77B4FF" />
+      <g class="paper p-border">
+        <rect x="30.3766" y="8.59515" width="139.078" height="118.782" rx="15.6283" transform="rotate(5.61532 30.3766 8.59515)" fill="#A3CBFC" />
+      </g>
+      <g class="paper p-shadow">
+        <rect x="10.9566" y="34.9451" width="135.195" height="106.917" rx="15.6283" transform="rotate(-11.4346 10.9566 34.9451)" fill="#A3CBFC" />
+      </g>
+      <g class="paper p-bg">
+        <rect x="17.1911" y="28.2213" width="135.195" height="106.917" rx="15.6283" transform="rotate(-11.3726 17.1911 28.2213)" fill="#94C2FB" />
+      </g>
+      <g class="paper p-white">
+        <rect x="17.1911" y="17.191" width="142.999" height="122.682" rx="15.6283" fill="white" />
+        <!-- faint writing, only visible once the paper peeks out -->
+        <rect x="30" y="76" width="28" height="5" rx="2.5" fill="#DCE9FB" />
+        <rect x="30" y="87" width="96" height="3.2" rx="1.6" fill="#EDF1F6" />
+        <rect x="30" y="94" width="110" height="3.2" rx="1.6" fill="#EDF1F6" />
+        <rect x="30" y="101" width="74" height="3.2" rx="1.6" fill="#EDF1F6" />
+      </g>
+    </svg>
+  </div>
+
+  <!-- notes sit between the rear and the front pocket -->
+  <div class="notes" id="notes"></div>
+
+  <!-- front pocket -->
+  <div class="folder-front" id="front">
+    <div class="front-tilt">
+      <svg viewBox="0 0 176.6 165.66" fill="none" aria-hidden="true">
+        <g filter="url(#pocketShadow)">
+          <path d="M65.6384 64.837C65.6384 69.5733 69.4778 73.4127 74.214 73.4127H143.781C155.568 73.4127 161.462 73.4127 165.124 77.0747C168.786 80.7366 168.786 86.6304 168.786 98.418V129.715C168.786 141.503 168.786 147.396 165.124 151.058C161.462 154.72 155.568 154.72 143.781 154.72H32.8194C21.0318 154.72 15.138 154.72 11.4761 151.058C7.81414 147.396 7.81414 141.503 7.81414 129.715V81.2666C7.81414 69.479 7.81414 63.5852 11.4761 59.9233C15.138 56.2614 21.0318 56.2614 32.8194 56.2614H57.0627C61.7989 56.2614 65.6384 60.1008 65.6384 64.837Z" fill="url(#pocketFill)" />
+        </g>
+        <defs>
+          <filter id="pocketShadow" x="-24" y="36" width="224.6" height="160" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+            <feFlood flood-opacity="0" result="BackgroundImageFix" />
+            <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha" />
+            <feOffset dy="5" />
+            <feGaussianBlur stdDeviation="8" />
+            <feColorMatrix type="matrix" values="0 0 0 0 0.176 0 0 0 0 0.435 0 0 0 0 0.816 0 0 0 0.2 0" />
+            <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow" />
+            <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow" result="shape" />
+          </filter>
+          <linearGradient id="pocketFill" x1="88.3" y1="56.2614" x2="88.3" y2="154.72" gradientUnits="userSpaceOnUse">
+            <stop offset="0.384615" stop-color="#A1C7F6" />
+            <stop offset="0.778846" stop-color="#4396FD" />
+          </linearGradient>
+        </defs>
+      </svg>
+      <div class="info">
+        <div>
+          <p class="info-title">Design Engineering Research</p>
+          <p class="info-notes"><span id="count">45</span> Notes</p>
+        </div>
+        <p class="info-size">120MB</p>
+      </div>
+    </div>
+    <button class="folder-hit" id="hit" aria-expanded="false" aria-label="Open Design Engineering Research folder"></button>
+  </div>
+
+  <button class="add" id="add" aria-label="Add document" tabindex="-1">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
+  </button>
+
+  <button class="reset" id="reset" type="button">Reset demo</button>
+  <div class="caption" id="caption" aria-live="polite"></div>
+</main>
+
+<!-- Note editor -->
+<div class="editor-root" id="editor" hidden>
+  <div class="backdrop" id="edBackdrop"></div>
+  <div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-label="Edit note">
+    <div class="note ghost-card" id="ghost" aria-hidden="true"></div>
+    <div class="ed" id="ed">
+      <header class="ed-head">
+        <span class="tag" id="edTag"></span>
+        <span class="ed-status" id="edStatus">Saved</span>
+        <div class="ed-actions">
+          <button class="icon-btn danger" id="edDelete" type="button" aria-label="Delete note"></button>
+          <button class="icon-btn" id="edClose" type="button" aria-label="Close note">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+      </header>
+      <input class="ed-title" id="edTitle" type="text" placeholder="Untitled document" aria-label="Note title" autocomplete="off" />
+      <textarea class="ed-body" id="edBody" placeholder="Start writing…" aria-label="Note body"></textarea>
+      <footer class="ed-foot">
+        <span id="edMeta"></span>
+        <span class="ed-hint">Saves automatically · <kbd>Esc</kbd> to close</span>
+      </footer>
+    </div>
+  </div>
+</div>
+
+<!-- Delete confirmation -->
+<div class="confirm-root" id="confirm" hidden>
+  <div class="backdrop" id="cfBackdrop"></div>
+  <div class="confirm" id="cfPanel" role="alertdialog" aria-modal="true" aria-labelledby="cfTitle" aria-describedby="cfText">
+    <div class="cf-icon" id="cfIcon"></div>
+    <h2 id="cfTitle">Delete this note?</h2>
+    <p id="cfText"></p>
+    <div class="cf-actions">
+      <button class="btn btn-ghost" id="cfCancel" type="button">Cancel</button>
+      <button class="btn btn-danger" id="cfDelete" type="button">Delete</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const FW = 353.2, FH = 331.32;   // folder element size (svg at 2px per unit)
+  const U = 2;                      // px per svg unit at scale 1
+  const BOX_CY = FH / 2 / U;        // folder box centre in svg units (82.83)
+  const BASE_COUNT = 39;            // notes in the folder that aren't shown as cards
+  const STORE = 'path.folderNotes.v1';
+  const EASE = 'cubic-bezier(.32,.72,0,1)';
+
+  const TRASH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>';
+
+  const $ = id => document.getElementById(id);
+  const stage = $('stage'), rear = $('rear'), front = $('front'), layer = $('notes');
+  const hit = $('hit'), addBtn = $('add'), caption = $('caption'), countEl = $('count');
+  const edRoot = $('editor'), edBackdrop = $('edBackdrop'), sheet = $('sheet'), ghost = $('ghost'), ed = $('ed');
+  const edTag = $('edTag'), edStatus = $('edStatus'), edTitle = $('edTitle'), edBody = $('edBody'), edMeta = $('edMeta');
+  const edClose = $('edClose'), edDelete = $('edDelete');
+  const cfRoot = $('confirm'), cfBackdrop = $('cfBackdrop'), cfPanel = $('cfPanel'), cfText = $('cfText');
+  const cfCancel = $('cfCancel'), cfDelete = $('cfDelete');
+  edDelete.innerHTML = TRASH;
+  $('cfIcon').innerHTML = TRASH;
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+  const canHover = matchMedia('(hover: hover) and (pointer: fine)');
+
+  const DATA = [
+    { tag: 'Motion', date: 'Oct 2', title: 'Spring physics primer', body: 'Stiffness, damping and mass — why springs feel alive where fixed durations feel scripted.', foot: '3 min read' },
+    { tag: 'Easing', date: 'Sep 28', title: 'Curves cheat sheet', body: 'Ease-out for entrances, ease-in for exits, and never linear for anything travelling through space.', foot: '2 min read' },
+    { tag: 'Interaction', date: 'Sep 24', title: 'Interruptible transitions', body: 'Every animation should be able to change its mind mid-flight without a jump or a reset.', foot: '4 min read' },
+    { tag: 'Technique', date: 'Sep 19', title: 'The FLIP method', body: 'First, Last, Invert, Play — animate layout changes using transforms only.', foot: '5 min read' },
+    { tag: 'A11y', date: 'Sep 12', title: 'Reduced motion audit', body: 'Swap travel for fades. Keep the feedback, drop the flourish.', foot: '2 min read' },
+    { tag: 'Gesture', date: 'Sep 6', title: 'Velocity handoff', body: 'Release velocity should seed the spring, so a flick keeps its momentum.', foot: '3 min read' },
+  ];
+
+  let geo, open = false, out = 0;
+  const notes = [];
+
+  /* ---------------- persistence ---------------- */
+  function loadItems() {
+    try {
+      const s = JSON.parse(localStorage.getItem(STORE));
+      if (s && Array.isArray(s.items)) return s.items;
+    } catch (e) {}
+    return DATA.map((d, i) => ({ id: 'n' + i, ...d }));
+  }
+  function persist() {
+    try { localStorage.setItem(STORE, JSON.stringify({ items: notes.map(n => n._item) })); } catch (e) {}
+  }
+
+  /* ---------------- geometry ---------------- */
+  function computeGeo() {
+    const W = stage.clientWidth, H = stage.clientHeight;
+    const cardW = W < 560 ? 136 : 168;
+    const cardH = Math.round(cardW * 1.25);
+    const closedS = Math.max(.45, Math.min(1, (W - 48) / 330, (H - 170) / 320));
+    const openS = Math.min(.4, closedS * .62);
+    const gap = W < 560 ? 44 : 60;
+    const folderH = 155 * U * openS;
+    const block = cardH + gap + folderH;
+    const top = (H - block) / 2 - 12;
+    const root = document.documentElement.style;
+    root.setProperty('--card-w', cardW + 'px');
+    root.setProperty('--card-h', cardH + 'px');
+    root.setProperty('--k', cardW / 168);
+    return {
+      W, H, cardW, cardH,
+      closed: { x: W / 2, y: H / 2 - 18, s: closedS },
+      open: { x: W / 2, y: top + cardH + gap + (BOX_CY * U) * openS, s: openS },
+      rowY: top + cardH / 2,
+    };
+  }
+
+  const folderT = f => `translate(${f.x - FW / 2}px, ${f.y - FH / 2}px) scale(${f.s})`;
+  const cardT = p => `translate(${p.x - geo.cardW / 2}px, ${p.y - geo.cardH / 2}px) rotate(${p.r || 0}deg) scale(${p.s})`;
+  const side = i => (i % 2 ? 1 : -1);
+
+  function insidePos(i, f) {
+    return { x: f.x + side(i) * 4 * f.s, y: f.y + (114 - BOX_CY) * U * f.s, s: (62 * U * f.s) / geo.cardH, r: side(i) * 2 };
+  }
+  function mouthPos(i, f) {
+    const s = insidePos(i, f).s * 1.3;
+    const h = geo.cardH * s;
+    return { x: f.x + side(i) * 8 * f.s, y: f.y + (58 - BOX_CY) * U * f.s - h * .32, s, r: side(i) * 5 };
+  }
+  // step = distance between resting cards; D = extra room the hover spread opens up
+  // so the hovered card shows in full. On hover devices the row reserves D up front,
+  // so spreading never pushes cards off-screen.
+  function rowStep(n) {
+    const { W, cardW } = geo;
+    const avail = Math.min(W - 40, 1120);
+    const full = cardW + 20;
+    if (n < 2) return { step: 0, D: 0 };
+    if (cardW + full * (n - 1) <= avail) return { step: full, D: 0 };
+    const step = canHover.matches && n > 2
+      ? Math.max(12, (avail - 2 * cardW - 20) / (n - 2))
+      : (avail - cardW) / (n - 1);
+    return { step, D: canHover.matches ? Math.max(0, full - step) : 0 };
+  }
+  function rowPos(i, n) {
+    const { step } = rowStep(n);
+    const width = geo.cardW + step * (n - 1);
+    return { x: geo.W / 2 - width / 2 + geo.cardW / 2 + i * step, y: geo.rowY, s: 1, r: 0 };
+  }
+
+  /* ---------------- animation helpers (interruptible: always start from the live value) ---------------- */
+  function stop(el) { (el._anims || []).forEach(a => a.cancel()); el._anims = []; }
+  function live(el) { const cs = getComputedStyle(el); return { t: cs.transform, o: +cs.opacity }; }
+
+  function animate(el, frames, oFrames, opts) {
+    const now = live(el);
+    stop(el);
+    const fT = frames.map((f, i) => i === 0 && f.transform == null ? { ...f, transform: now.t } : f);
+    el.style.transform = fT[fT.length - 1].transform;
+    if (oFrames) el.style.opacity = oFrames[oFrames.length - 1].opacity;
+    if (reduced.matches) {
+      if (oFrames) el._anims.push(el.animate([{ opacity: now.o }, { opacity: el.style.opacity }], { duration: 180, delay: (opts.delay || 0) * .3, fill: 'backwards' }));
+      return;
+    }
+    el._anims.push(el.animate(fT, { fill: 'backwards', ...opts }));
+    if (oFrames) {
+      const oF = oFrames.map((f, i) => i === 0 && f.opacity == null ? { ...f, opacity: now.o } : f);
+      el._anims.push(el.animate(oF, { fill: 'backwards', ...opts, easing: 'linear' }));
+    }
+  }
+
+  function setOut(el, isOut) {
+    el.classList.toggle('is-out', isOut);
+    el.tabIndex = isOut ? 0 : -1;
+    const t = el.querySelector('.note-trash');
+    if (t) t.tabIndex = isOut ? 0 : -1;
+  }
+  function setCard(el, p, opacity) { stop(el); el.style.transform = cardT(p); el.style.opacity = opacity; }
+
+  function emerge(el, i, target, delay = 0) {
+    const f = geo.open;
+    const visible = live(el).o > .05;
+    setOut(el, true);
+    animate(el,
+      [
+        { transform: visible ? null : cardT(insidePos(i, f)), easing: 'cubic-bezier(.35,0,.55,1)' },
+        { transform: cardT(mouthPos(i, f)), offset: .36, easing: 'cubic-bezier(.22,1.18,.36,1)' },
+        { transform: cardT(target) },
+      ],
+      [{ opacity: visible ? null : 0 }, { opacity: 1, offset: .1 }, { opacity: 1 }],
+      { duration: 760, delay }
+    );
+  }
+
+  /* Smooth, continuous paths for swiping a note in or out. Each axis gets its own
+     easing and the result is sampled into keyframes, so the card curves into / out
+     of the folder in one unbroken motion — no stop at a waypoint. */
+  const ease = {
+    outCubic: t => 1 - Math.pow(1 - t, 3),
+    inOutSine: t => -(Math.cos(Math.PI * t) - 1) / 2,
+    inOutCubic: t => (t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2),
+    outBackSoft: t => { const c = .9, c3 = c + 1; return 1 + c3 * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2); },
+  };
+  const window01 = (fn, a, b) => t => fn(Math.min(1, Math.max(0, (t - a) / (b - a))));
+
+  function posNow(el) {
+    const m = new DOMMatrixReadOnly(getComputedStyle(el).transform);
+    return { x: m.e + geo.cardW / 2, y: m.f + geo.cardH / 2, s: Math.hypot(m.a, m.b), r: Math.atan2(m.b, m.a) * 180 / Math.PI };
+  }
+
+  function curve(a, b, e, steps = 36) {
+    const frames = [];
+    for (let k = 0; k <= steps; k++) {
+      const t = k / steps, at = (p, fn) => a[p] + (b[p] - a[p]) * fn(t);
+      frames.push({ transform: cardT({ x: at('x', e.x), y: at('y', e.y), s: at('s', e.s), r: at('r', e.r) }), offset: t });
+    }
+    return frames;
+  }
+
+  // swipe left: glides over the folder while shrinking, then settles gently down into the pocket
+  function tuck(el, i, delay = 0) {
+    setOut(el, false);
+    animate(el,
+      curve(posNow(el), insidePos(i, geo.open), {
+        x: window01(ease.outCubic, 0, .7),   // reaches the folder early…
+        y: ease.inOutSine,                   // …while the drop eases in and out
+        s: ease.inOutCubic,
+        r: ease.inOutSine,
+      }),
+      [{ opacity: null }, { opacity: 1, offset: .8 }, { opacity: 0 }],
+      { duration: 680, delay, easing: 'linear' }
+    );
+  }
+
+  // swipe right: pops gently up out of the pocket, then expands as it glides into its slot
+  function popOut(el, i, target, delay = 0) {
+    const visible = live(el).o > .05;
+    setOut(el, true);
+    animate(el,
+      curve(visible ? posNow(el) : insidePos(i, geo.open), target, {
+        x: window01(ease.inOutCubic, .15, 1),   // rises first, travels sideways after
+        y: ease.outBackSoft,                     // a soft pop, settling into place
+        s: window01(ease.outCubic, .08, 1),
+        r: ease.outCubic,
+      }),
+      [{ opacity: visible ? null : 0 }, { opacity: 1, offset: .12 }, { opacity: 1 }],
+      { duration: 720, delay, easing: 'linear' }
+    );
+  }
+
+  function slide(el, target, delay = 0) {
+    animate(el, [{ transform: null }, { transform: cardT(target) }], null,
+      { duration: 520, delay, easing: EASE });
+  }
+
+  function moveFolder(f, opts) {
+    [rear, front].forEach(el => animate(el, [{ transform: null }, { transform: folderT(f) }], null, opts));
+  }
+
+  function nudge(el, dir) {
+    if (reduced.matches) return;
+    el.animate(
+      [{ transform: 'translateX(0)' }, { transform: `translateX(${dir * 12}px)` }, { transform: `translateX(${-dir * 4}px)` }, { transform: 'translateX(0)' }],
+      { duration: 380, easing: 'ease-out', composite: 'add' }
+    );
+  }
+
+  /* ---------------- notes ---------------- */
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const wordCount = s => (s.trim().match(/\S+/g) || []).length;
+  const titleOf = it => it.title.trim() || 'Untitled document';
+  function footOf(it) {
+    if (it.foot) return it.foot;
+    const w = wordCount(it.body);
+    return w ? `${w} word${w === 1 ? '' : 's'}` : 'Empty';
+  }
+
+  function renderCard(el) {
+    const it = el._item;
+    const isOut = el.classList.contains('is-out');
+    el.setAttribute('aria-label', `Open note: ${titleOf(it)}`);
+    el.innerHTML = `
+      <div class="note-top"><span class="tag">${esc(it.tag)}</span><span class="date">${esc(it.date)}</span></div>
+      <h3 class="${it.title.trim() ? '' : 'is-empty'}">${esc(titleOf(it))}</h3>
+      ${it.body.trim() ? `<p>${esc(it.body)}</p>` : '<div class="skeleton"><i></i><i></i><i></i></div>'}
+      <div class="note-foot">
+        <span>${esc(footOf(it))}</span>
+        <button class="note-trash" type="button" tabindex="${isOut ? 0 : -1}" aria-label="Delete note: ${esc(titleOf(it))}">${TRASH}</button>
+      </div>`;
+  }
+
+  function makeNote(item) {
+    const el = document.createElement('article');
+    el.className = 'note';
+    el.setAttribute('role', 'button');
+    el.tabIndex = -1;
+    el._item = item;
+    renderCard(el);
+    layer.appendChild(el);
+    return el;
+  }
+  function restack() { notes.forEach((el, i) => (el.style.zIndex = i + 1)); }
+  function updateCount() { countEl.textContent = BASE_COUNT + notes.length; }
+
+  /* ---------------- folder states ---------------- */
+  function placeAdd() {
+    const f = open ? geo.open : geo.closed;
+    addBtn.style.left = f.x + (161 / 2) * U * f.s + 40 + 'px';
+    addBtn.style.top = f.y + (100 - BOX_CY) * U * f.s + 'px';
+  }
+
+  function renderCaption() {
+    caption.innerHTML = open
+      ? `<span class="count">${out} / ${notes.length}</span> out &nbsp;·&nbsp; swipe <kbd>←</kbd> to tuck a note away, <kbd>→</kbd> to pull one out`
+      : `Click the folder to open`;
+  }
+
+  function openFolder() {
+    setHot(-1);
+    open = true;
+    stage.classList.add('is-open');
+    stage.classList.remove('is-hover');
+    hit.setAttribute('aria-expanded', 'true');
+    hit.setAttribute('aria-label', 'Close folder');
+    addBtn.tabIndex = 0;
+    moveFolder(geo.open, { duration: 640, easing: EASE });
+    out = notes.length;
+    notes.forEach((el, i) => emerge(el, i, rowPos(i, out), 170 + i * 55));
+    placeAdd();
+    renderCaption();
+  }
+
+  function closeFolder() {
+    setHot(-1);
+    open = false;
+    stage.classList.remove('is-open', 'is-hover');
+    hit.setAttribute('aria-expanded', 'false');
+    hit.setAttribute('aria-label', 'Open Design Engineering Research folder');
+    addBtn.tabIndex = -1;
+    const n = out;
+    for (let i = 0; i < n; i++) tuck(notes[i], i, (n - 1 - i) * 45);
+    const wait = n ? (n - 1) * 45 + 400 : 0;
+    moveFolder(geo.closed, { duration: 620, delay: wait, easing: 'cubic-bezier(.34,1.22,.64,1)' });
+    out = 0;
+    placeAdd();
+    renderCaption();
+  }
+
+  function tuckOne() {
+    if (!open) return;
+    setHot(-1);
+    if (out === 0) { nudge(rear, -1); nudge(front, -1); return; }
+    out--;
+    tuck(notes[out], out);
+    for (let i = 0; i < out; i++) slide(notes[i], rowPos(i, out), 60);
+    renderCaption();
+  }
+
+  function pullOne() {
+    if (!open) return;
+    setHot(-1);
+    if (out === notes.length) { nudge(layer, 1); return; }
+    const n = out + 1;
+    for (let i = 0; i < out; i++) slide(notes[i], rowPos(i, n));
+    popOut(notes[out], out, rowPos(out, n));
+    out = n;
+    renderCaption();
+  }
+
+  function addNote() {
+    if (!open) return;
+    const item = {
+      id: 'n' + Date.now(), tag: 'New', title: '', body: '', foot: null,
+      date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+    };
+    const el = makeNote(item);
+    notes.splice(out, 0, el);
+    restack();
+    setCard(el, insidePos(out, geo.open), 0);
+    updateCount();
+    persist();
+    pullOne();
+  }
+
+  // the card scales down and fades where it sits, then the row closes the gap
+  function deleteNote(el, { instant = false } = {}) {
+    const i = notes.indexOf(el);
+    if (i < 0) return;
+    setHot(-1);
+    notes.splice(i, 1);
+    if (i < out) out--;
+    setOut(el, false);
+    if (instant || reduced.matches) {
+      el.remove();
+    } else {
+      el.animate([{ scale: 1, opacity: 1 }, { scale: .6, opacity: 0 }],
+        { duration: 260, easing: 'cubic-bezier(.4,0,.8,.4)', fill: 'forwards' }).onfinish = () => el.remove();
+    }
+    for (let j = 0; j < out; j++) slide(notes[j], rowPos(j, out), instant ? 0 : 140);
+    restack();
+    updateCount();
+    persist();
+    renderCaption();
+    const next = notes[Math.min(i, out - 1)];
+    (next && next.classList.contains('is-out') ? next : addBtn).focus({ preventScroll: true });
+  }
+
+  function layoutInstant() {
+    geo = computeGeo();
+    setHot(-1);
+    const f = open ? geo.open : geo.closed;
+    [rear, front].forEach(el => { stop(el); el.style.transform = folderT(f); });
+    notes.forEach((el, i) => {
+      const isOut = open && i < out;
+      setOut(el, isOut);
+      setCard(el, isOut ? rowPos(i, out) : insidePos(i, f), isOut ? 1 : 0);
+    });
+    placeAdd();
+    if (editing) {
+      const to = sheetTarget();
+      Object.assign(sheet.style, px(to));
+      ed.style.width = to.width + 'px';
+      ed.style.height = to.height + 'px';
+    }
+  }
+
+  /* ---------------- editor (card morphs into a centred sheet) ---------------- */
+  let editing = null, edToken = 0, edAnims = [], saveTimer = null;
+  const px = r => ({ left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
+  const rectOf = el => { const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height }; };
+  function sheetTarget() {
+    const W = innerWidth, H = innerHeight, small = W < 560;
+    const width = Math.min(640, W - (small ? 16 : 48));
+    const height = Math.min(620, H - (small ? 16 : 80));
+    return { left: (W - width) / 2, top: (H - height) / 2, width, height };
+  }
+  function sheetNow() {
+    const cs = getComputedStyle(sheet);
+    return { left: parseFloat(cs.left), top: parseFloat(cs.top), width: parseFloat(cs.width), height: parseFloat(cs.height), r: cs.borderRadius };
+  }
+  function edRun(el, frames, opts) { const a = el.animate(frames, opts); edAnims.push(a); return a; }
+  function edStop() {
+    const snap = { sheet: sheetNow(), edO: +getComputedStyle(ed).opacity, edT: getComputedStyle(ed).transform, gO: +getComputedStyle(ghost).opacity, gT: getComputedStyle(ghost).transform, bO: +getComputedStyle(edBackdrop).opacity };
+    edAnims.forEach(a => a.cancel());
+    edAnims = [];
+    return snap;
+  }
+  const cardRadius = () => 16 * geo.cardW / 168 + 'px';
+
+  function updateMeta() {
+    const it = editing._item, w = wordCount(it.body);
+    edMeta.textContent = `${it.date} · ${w} word${w === 1 ? '' : 's'}`;
+  }
+
+  // Morph timing. A gentle ease-out (not front-loaded), so a slow first frame can't
+  // turn into a visible jump, and every layer shares the same curve and duration.
+  const MORPH = 'cubic-bezier(.25,.8,.25,1)';
+  const CARD_SHADOW = '0 1px 2px rgba(20, 40, 80, .06), 0 10px 28px rgba(30, 80, 160, .12)';
+  const SHEET_SHADOW = '0 2px 6px rgba(20, 40, 90, .08), 0 30px 80px rgba(20, 40, 90, .26)';
+
+  function openEditor(el) {
+    if (editing) finishClose();
+    editing = el;
+    const it = el._item, token = ++edToken;
+    edTag.textContent = it.tag;
+    edTitle.value = it.title;
+    edBody.value = it.body;
+    edStatus.textContent = 'Saved';
+    edStatus.classList.remove('is-saving');
+    updateMeta();
+    ghost.innerHTML = el.innerHTML;
+
+    const from = rectOf(el), to = sheetTarget();
+    const fromShadow = getComputedStyle(el).boxShadow;
+    setHot(-1);
+
+    // 1. Set everything up sitting exactly on top of the card (looks identical to it),
+    //    so the costly setup happens before the first animated frame, not during it.
+    edRoot.hidden = false;
+    edRoot.classList.remove('is-leaving');
+    ed.style.width = to.width + 'px';
+    ed.style.height = to.height + 'px';
+    Object.assign(sheet.style, px(from), { borderRadius: cardRadius(), boxShadow: fromShadow });
+    ed.style.opacity = 0; ed.style.transform = 'translateY(6px)';
+    ghost.style.opacity = 1; ghost.style.transform = 'none';
+    edBackdrop.style.opacity = 0;
+    el.style.visibility = 'hidden';
+
+    const focusField = () => {
+      if (token !== edToken) return;
+      (it.title.trim() ? edBody : edTitle).focus({ preventScroll: true });
+      if (it.title.trim()) edBody.setSelectionRange(edBody.value.length, edBody.value.length);
+    };
+
+    if (reduced.matches) {
+      Object.assign(sheet.style, px(to), { borderRadius: '22px', boxShadow: SHEET_SHADOW });
+      ed.style.opacity = 1; ed.style.transform = 'none'; ghost.style.opacity = 0; edBackdrop.style.opacity = '';
+      edRun(edRoot, [{ opacity: 0 }, { opacity: 1 }], { duration: 180 });
+      return focusField();
+    }
+
+    // 2. Next frame: grow. The two contents cross-fade with an overlap, so there is
+    //    never a moment where the sheet is an empty white box.
+    requestAnimationFrame(() => {
+      if (token !== edToken) return;
+      const d = 520;
+      Object.assign(sheet.style, px(to), { borderRadius: '22px', boxShadow: SHEET_SHADOW });
+      ed.style.opacity = 1; ed.style.transform = 'none';
+      ghost.style.opacity = 0;
+      edBackdrop.style.opacity = '';
+      edRun(sheet, [
+        { ...px(from), borderRadius: cardRadius(), boxShadow: fromShadow },
+        { ...px(to), borderRadius: '22px', boxShadow: SHEET_SHADOW },
+      ], { duration: d, easing: MORPH }).onfinish = focusField;
+      edRun(ed, [{ transform: 'translateY(6px)' }, { transform: 'none' }], { duration: d, easing: MORPH });
+      edRun(ghost, [{ opacity: 1 }, { opacity: 0, offset: .3 }, { opacity: 0 }], { duration: d });
+      edRun(ed, [{ opacity: 0 }, { opacity: 0, offset: .12 }, { opacity: 1, offset: .5 }, { opacity: 1 }], { duration: d });
+      edRun(edBackdrop, [{ opacity: 0 }, { opacity: 1 }], { duration: 380, easing: 'ease-out' });
+    });
+  }
+
+  function flushSave() {
+    if (!saveTimer) return;
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    persist();
+  }
+
+  function closeEditor() {
+    if (!editing || edRoot.classList.contains('is-leaving')) return;
+    flushSave();
+    const el = editing, token = ++edToken;
+    renderCard(el);
+    ghost.innerHTML = el.innerHTML;
+    edRoot.classList.add('is-leaving');
+    const now = edStop();
+    const nowShadow = getComputedStyle(sheet).boxShadow;
+    const to = rectOf(el);
+
+    if (reduced.matches) {
+      edBackdrop.style.opacity = 0;
+      edRun(edRoot, [{ opacity: 1 }, { opacity: 0 }], { duration: 160 }).onfinish = () => token === edToken && finishClose();
+      return;
+    }
+    // Shrink back onto the card, ending with the card's own radius, shadow and content,
+    // so the hand-off to the real card on the last frame is invisible.
+    const d = 460;
+    Object.assign(sheet.style, px(to), { borderRadius: cardRadius(), boxShadow: CARD_SHADOW });
+    ed.style.opacity = 0; ed.style.transform = 'none';
+    ghost.style.opacity = 1; ghost.style.transform = 'none';
+    edBackdrop.style.opacity = 0;
+    edRun(sheet, [
+      { ...px(now.sheet), borderRadius: now.sheet.r, boxShadow: nowShadow },
+      { ...px(to), borderRadius: cardRadius(), boxShadow: CARD_SHADOW },
+    ], { duration: d, easing: MORPH }).onfinish = () => token === edToken && finishClose();
+    edRun(ed, [{ opacity: now.edO }, { opacity: 0, offset: .3 }, { opacity: 0 }], { duration: d });
+    edRun(ghost, [{ opacity: now.gO }, { opacity: now.gO, offset: .25 }, { opacity: 1, offset: .7 }, { opacity: 1 }], { duration: d });
+    edRun(edBackdrop, [{ opacity: now.bO }, { opacity: 0 }], { duration: 360, easing: 'ease-in-out' });
+  }
+
+  function finishClose() {
+    edAnims.forEach(a => a.cancel());
+    edAnims = [];
+    const el = editing;
+    editing = null;
+    edRoot.hidden = true;
+    edRoot.classList.remove('is-leaving');
+    ghost.style.transform = ''; ed.style.transform = '';
+    if (el && el.isConnected) {
+      el.style.visibility = '';
+      el.focus({ preventScroll: true });
+    }
+  }
+
+  // used when the note is deleted from inside the editor: no card to morph back into
+  function dismissEditor() {
+    if (!editing) return Promise.resolve();
+    clearTimeout(saveTimer); saveTimer = null;
+    const token = ++edToken;
+    edRoot.classList.add('is-leaving');
+    const now = edStop();
+    return new Promise(res => {
+      const done = () => {
+        if (token !== edToken) return res();
+        edAnims.forEach(a => a.cancel()); edAnims = [];
+        editing = null;
+        edRoot.hidden = true;
+        edRoot.classList.remove('is-leaving');
+        res();
+      };
+      if (reduced.matches) { done(); return; }
+      edRun(sheet, [{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(.94)' }], { duration: 200, easing: 'cubic-bezier(.4,0,1,1)', fill: 'forwards' }).onfinish = done;
+      edRun(edBackdrop, [{ opacity: now.bO }, { opacity: 0 }], { duration: 220, easing: 'ease-in', fill: 'forwards' });
+    });
+  }
+
+  function onEdit() {
+    if (!editing) return;
+    const it = editing._item;
+    it.title = edTitle.value;
+    it.body = edBody.value;
+    it.foot = null;
+    updateMeta();
+    edStatus.textContent = 'Saving…';
+    edStatus.classList.add('is-saving');
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      persist();
+      if (editing) renderCard(editing);
+      edStatus.textContent = 'Saved';
+      edStatus.classList.remove('is-saving');
+    }, 400);
+  }
+  edTitle.addEventListener('input', onEdit);
+  edBody.addEventListener('input', onEdit);
+  edTitle.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); edBody.focus(); } });
+  edClose.addEventListener('click', closeEditor);
+  edBackdrop.addEventListener('click', closeEditor);
+  edDelete.addEventListener('click', () => {
+    const el = editing;
+    if (!el) return;
+    askDelete(el._item, edDelete).then(ok => {
+      if (!ok) return;
+      dismissEditor().then(() => deleteNote(el, { instant: true }));
+    });
+  });
+
+  /* ---------------- delete confirmation ---------------- */
+  let cfResolve = null, cfReturn = null;
+  function askDelete(item, returnFocus) {
+    if (cfResolve) return Promise.resolve(false);
+    cfReturn = returnFocus;
+    cfText.textContent = `“${titleOf(item)}” will be removed from Design Engineering Research. This can’t be undone.`;
+    cfRoot.hidden = false;
+    cfRoot.classList.remove('is-leaving');
+    if (!reduced.matches) {
+      cfBackdrop.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, easing: 'ease-out' });
+      cfPanel.animate([{ opacity: 0, transform: 'translateY(8px) scale(.96)' }, { opacity: 1, transform: 'none' }], { duration: 280, easing: EASE });
+    }
+    cfCancel.focus({ preventScroll: true });
+    return new Promise(res => (cfResolve = res));
+  }
+  function settleConfirm(ok) {
+    if (!cfResolve) return;
+    const res = cfResolve;
+    cfResolve = null;
+    cfRoot.classList.add('is-leaving');
+    const done = () => { cfRoot.hidden = true; cfRoot.classList.remove('is-leaving'); };
+    if (reduced.matches) done();
+    else {
+      cfBackdrop.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 160, easing: 'ease-in', fill: 'forwards' });
+      cfPanel.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(.96)' }], { duration: 160, easing: 'ease-in', fill: 'forwards' })
+        .onfinish = function () { done(); this.cancel(); cfBackdrop.getAnimations().forEach(a => a.cancel()); };
+    }
+    if (!ok && cfReturn && cfReturn.isConnected) cfReturn.focus({ preventScroll: true });
+    res(ok);
+  }
+  cfCancel.addEventListener('click', () => settleConfirm(false));
+  cfBackdrop.addEventListener('click', () => settleConfirm(false));
+  cfDelete.addEventListener('click', () => settleConfirm(true));
+
+  function trapFocus(e, root) {
+    const f = [...root.querySelectorAll('button, input, textarea')].filter(x => !x.disabled && x.offsetParent !== null);
+    if (!f.length) return;
+    const first = f[0], last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    else if (!root.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+  }
+
+  /* ---------------- hover spread ----------------
+     The hovered card is picked from the pointer's x against the *resting* slots,
+     so cards moving never change which note is under the pointer (no flicker). */
+  let hot = -1, hotTimer = null;
+
+  function hotAt(x, y) {
+    if (!open || !out || Math.abs(y - geo.rowY) > geo.cardH / 2 + 6) return -1;
+    const { step } = rowStep(out), half = geo.cardW / 2;
+    for (let i = 0; i < out; i++) {
+      const c = rowPos(i, out).x;
+      const L = i === 0 ? c - half : Math.max(c - half, c - step / 2);
+      const R = i === out - 1 ? c + half : Math.min(c + half, c + step / 2);
+      if (x >= L && x < R) return i;
+    }
+    return -1;
+  }
+
+  function applySpread() {
+    const { D } = rowStep(out);
+    notes.forEach((el, j) => {
+      const active = hot >= 0 && j < out;
+      const dx = active && D ? (j <= hot ? -D / 2 : D / 2) : 0;
+      const lift = active && j === hot ? -5 : 0;
+      el.style.translate = dx || lift ? `${dx}px ${lift}px` : '';
+      el.classList.toggle('is-hot', active && j === hot);
+    });
+  }
+
+  function setHot(i) {
+    clearTimeout(hotTimer);
+    hotTimer = null;
+    if (i === hot) return;
+    hot = i;
+    applySpread();
+  }
+
+  stage.addEventListener('pointermove', e => {
+    if (e.pointerType !== 'mouse' || drag || editing || cfResolve) return;
+    const i = hotAt(e.clientX, e.clientY);
+    if (i >= 0) setHot(i);
+    else if (hot >= 0 && !hotTimer) hotTimer = setTimeout(() => setHot(-1), 80);   // grace period on leave
+  });
+  stage.addEventListener('pointerleave', () => { if (!editing) setHot(-1); });
+  layer.addEventListener('focusin', e => {
+    const card = e.target.closest('.note');
+    const i = notes.indexOf(card);
+    if (i >= 0 && i < out) setHot(i);
+  });
+  layer.addEventListener('focusout', e => {
+    if (!editing && !cfResolve && !layer.contains(e.relatedTarget)) setHot(-1);
+  });
+
+  /* ---------------- input ---------------- */
+  let suppressClick = false;
+  hit.addEventListener('click', () => {
+    if (suppressClick) { suppressClick = false; return; }
+    open ? closeFolder() : openFolder();
+  });
+  hit.addEventListener('pointerenter', e => { if (e.pointerType === 'mouse') stage.classList.add('is-hover'); });
+  hit.addEventListener('pointerleave', () => stage.classList.remove('is-hover'));
+  hit.addEventListener('focus', () => { if (hit.matches(':focus-visible')) stage.classList.add('is-hover'); });
+  hit.addEventListener('blur', () => stage.classList.remove('is-hover'));
+  addBtn.addEventListener('click', addNote);
+  $('reset').addEventListener('click', () => {
+    try { localStorage.removeItem(STORE); } catch (e) {}
+    location.reload();
+  });
+
+  // cards: click opens the editor, the trash asks before deleting
+  layer.addEventListener('click', e => {
+    const card = e.target.closest('.note');
+    if (!card || !open || !card.classList.contains('is-out')) return;
+    if (suppressClick) { suppressClick = false; return; }
+    const trash = e.target.closest('.note-trash');
+    if (trash) {
+      askDelete(card._item, trash).then(ok => ok && deleteNote(card));
+    } else {
+      openEditor(card);
+    }
+  });
+  layer.addEventListener('keydown', e => {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.classList.contains('note')) {
+      e.preventDefault();
+      openEditor(e.target);
+    }
+  });
+
+  document.addEventListener('keydown', e => {
+    if (cfResolve) {
+      if (e.key === 'Escape') { e.preventDefault(); settleConfirm(false); }
+      else if (e.key === 'Tab') trapFocus(e, cfPanel);
+      return;
+    }
+    if (editing) {
+      if (e.key === 'Escape') { e.preventDefault(); closeEditor(); }
+      else if (e.key === 'Tab') trapFocus(e, sheet);
+      return;
+    }
+    if (!open) return;
+    if (e.target.closest && e.target.closest('input, textarea')) return;
+    if (e.key === 'ArrowLeft') { e.preventDefault(); tuckOne(); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); pullOne(); }
+    else if (e.key === 'Escape') closeFolder();
+  });
+
+  // trackpad / shift+wheel: one note per gesture
+  let acc = 0, locked = false, quiet;
+  stage.addEventListener('wheel', e => {
+    if (!open || editing || cfResolve) return;
+    const scale = e.deltaMode === 1 ? 16 : 1;
+    const d = (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.shiftKey ? e.deltaY : 0) * scale;
+    if (!d) return;
+    e.preventDefault();
+    clearTimeout(quiet);
+    quiet = setTimeout(() => { locked = false; acc = 0; }, 180);
+    if (locked) return;
+    acc += d;
+    if (Math.abs(acc) > 36) {
+      acc > 0 ? tuckOne() : pullOne();   // fingers moving left → tuck, right → pull out
+      locked = true;
+      acc = 0;
+    }
+  }, { passive: false });
+
+  // drag / touch swipe: one note per swipe, with rubber-band feedback while dragging
+  let drag = null;
+  stage.addEventListener('pointerdown', e => {
+    if (!open || e.button > 0 || e.target.closest('.add, .note-trash, .reset')) return;
+    drag = { x: e.clientX, dx: 0, id: e.pointerId, lastX: e.clientX, lastT: performance.now(), v: 0 };
+  });
+  window.addEventListener('pointermove', e => {
+    if (!drag || e.pointerId !== drag.id) return;
+    drag.dx = e.clientX - drag.x;
+    const now = performance.now();
+    drag.v = (e.clientX - drag.lastX) / Math.max(1, now - drag.lastT);
+    drag.lastX = e.clientX; drag.lastT = now;
+    if (Math.abs(drag.dx) > 6) {
+      if (!stage.classList.contains('is-dragging')) setHot(-1);
+      stage.classList.add('is-dragging');
+      const rubber = Math.sign(drag.dx) * Math.min(60, Math.abs(drag.dx) * .35);
+      layer.style.transition = 'none';
+      layer.style.translate = `${rubber}px 0`;
+    }
+  });
+  function endDrag(e) {
+    if (!drag || e.pointerId !== drag.id) return;
+    const { dx, v } = drag;
+    drag = null;
+    stage.classList.remove('is-dragging');
+    layer.style.transition = 'translate 420ms cubic-bezier(.32,.72,0,1)';
+    layer.style.translate = '0 0';
+    if (Math.abs(dx) > 6) {
+      suppressClick = true;
+      setTimeout(() => (suppressClick = false), 0);
+    }
+    const flick = Math.abs(v) > .45 && Math.abs(dx) > 12;
+    if (dx < -48 || (flick && dx < 0)) tuckOne();
+    else if (dx > 48 || (flick && dx > 0)) pullOne();
+  }
+  window.addEventListener('pointerup', endDrag);
+  window.addEventListener('pointercancel', endDrag);
+
+  let rT;
+  window.addEventListener('resize', () => { clearTimeout(rT); rT = setTimeout(layoutInstant, 60); });
+
+  /* ---------------- init ---------------- */
+  loadItems().forEach(item => notes.push(makeNote(item)));
+  restack();
+  updateCount();
+  layoutInstant();
+  renderCaption();
+  (window.requestIdleCallback || setTimeout)(() => {
+    if (editing) return;
+    const to = sheetTarget();
+    edRoot.style.visibility = 'hidden';
+    edRoot.hidden = false;
+    Object.assign(sheet.style, px(to));
+    ed.style.width = to.width + 'px';
+    ed.style.height = to.height + 'px';
+    void sheet.offsetHeight;
+    requestAnimationFrame(() => {
+      if (!editing) edRoot.hidden = true;
+      edRoot.style.visibility = '';
+    });
+  });
+})();
+</script>
+</body>
+</html>
